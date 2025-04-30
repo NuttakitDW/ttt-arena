@@ -4,6 +4,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();        // add SignalR services
 
 var app = builder.Build();
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.MapHub<ArenaHub>("/play");        // websocket endpoint → /play
 app.Run();
 
