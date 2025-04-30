@@ -1,29 +1,57 @@
+// Program.cs – full, self-contained Tic-Tac-Toe WebSocket demo
+// ------------------------------------------------------------
+
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddSignalR();        // add SignalR services
+
+// Console logging is on by default; we’ll use it for Move diagnostics.
+builder.Services.AddSignalR();
 
 var app = builder.Build();
+
+// Serve wwwroot/index.html so you can browse to http://localhost:5000/
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.MapHub<ArenaHub>("/play");        // websocket endpoint → /play
+
+app.MapHub<ArenaHub>("/play");    // WebSocket endpoint
 app.Run();
 
+
+// ========== Hub ==========================================================
 public class ArenaHub : Hub
 {
+    private readonly ILogger<ArenaHub> _log;
+    public ArenaHub(ILogger<ArenaHub> log) => _log = log;
+
     public override async Task OnConnectedAsync()
     {
         var room = Room.Assign(Context.ConnectionId);
         await Groups.AddToGroupAsync(Context.ConnectionId, room.Id);
 
         if (room.IsFull)
-            await Clients.Group(room.Id).SendAsync("start", room.StartPayload());
+        {
+            // Tell *each* caller its real mark.
+            foreach (var cid in room.Players)
+                await Clients.Client(cid)
+                             .SendAsync("start", room.StartPayload(cid));
+        }
     }
 
     public async Task Move(int cell)
     {
         var room = Room.Find(Context.ConnectionId);
-        if (!room.TryMove(Context.ConnectionId, cell, out var update)) return;
+
+        if (!room.TryMove(Context.ConnectionId, cell, out var update))
+        {
+            _log.LogInformation("Move rejected | cid={Cid} cell={Cell} reason={Reason}",
+                                Context.ConnectionId, cell, room.RejectionReason);
+            return;
+        }
+
+        _log.LogInformation("Move accepted | cid={Cid} cell={Cell} mark={Mark}",
+                            Context.ConnectionId, cell, update.board[cell]);
 
         await Clients.Group(room.Id).SendAsync("update", update);
 
@@ -39,52 +67,65 @@ public class ArenaHub : Hub
     }
 }
 
+
+// ========== Room (game state) ============================================
 record Update(string?[] board, string turn, string? result);
 
 class Room
 {
-    /* ---- static pool ---- */
+    // ----- static pool of rooms -----------------------------------------
     private static readonly List<Room> Pool = [];
     public static Room Assign(string cid)
     {
-        var r = Pool.FirstOrDefault(x => !x.IsFull);
-        if (r == null)
+        // try to reuse an open room
+        var room = Pool.FirstOrDefault(r => !r.IsFull);
+
+        if (room is null)
         {
-            Pool.Add(new Room());
-            r = Pool.Last();
+            room = new Room();
+            Pool.Add(room);
         }
-        r.players.Add(cid);
-        return r;
+
+        room.players.Add(cid);
+        return room;
     }
     public static Room Find(string cid) => Pool.Single(r => r.players.Contains(cid));
 
-    /* ---- instance ---- */
+    // ----- instance data -------------------------------------------------
     public string Id { get; } = Guid.NewGuid().ToString();
-    private readonly List<string> players = [];
     private readonly string?[] board = new string?[9];
     private string turn = "X";
+    private readonly List<string> players = [];
+    public IReadOnlyList<string> Players => players.AsReadOnly();
 
     public bool IsFull => players.Count == 2;
+    public string RejectionReason { get; private set; } = "";
 
-    public object StartPayload() => new { yourMark = "X", turn };
+    public object StartPayload(string cid)
+        => new { yourMark = cid == players[0] ? "X" : "O", turn };
 
     public bool TryMove(string cid, int cell, out Update update)
     {
         update = null!;
-        if (!IsFull || cell is < 0 or > 8 || board[cell] is not null) return false;
+
+        if (!IsFull) { RejectionReason = "room_not_full"; return false; }
+        if (cell is < 0 or > 8) { RejectionReason = "cell_out_of_range"; return false; }
+        if (board[cell] is not null) { RejectionReason = "cell_occupied"; return false; }
 
         var mark = cid == players[0] ? "X" : "O";
-        if (turn != mark) return false;
+        if (turn != mark) { RejectionReason = "wrong_turn"; return false; }
 
         board[cell] = mark;
         turn = mark == "X" ? "O" : "X";
 
         update = new Update(board, turn, CheckWin());
+        RejectionReason = "";
         return true;
     }
 
     public void Remove(string cid) => players.Remove(cid);
 
+    // ----- win / draw detection -----------------------------------------
     private string? CheckWin()
     {
         int[][] lines =
@@ -95,7 +136,8 @@ class Room
         };
         foreach (var ln in lines)
             if (board[ln[0]] is { } m && m == board[ln[1]] && m == board[ln[2]])
-                return m;
+                return m;                          // X or O wins
+
         return board.All(c => c is not null) ? "draw" : null;
     }
 }
