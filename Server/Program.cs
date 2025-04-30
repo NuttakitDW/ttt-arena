@@ -2,7 +2,6 @@
 // ------------------------------------------------------------
 
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
 
