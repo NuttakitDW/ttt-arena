@@ -1,51 +1,74 @@
-<!DOCTYPE html><meta charset="utf-8">
-<table id="board"></table><p id="msg"></p>
+<table id="board"></table>
+<p id="msg"></p>
 
 <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"></script>
 <script>
-const board = document.getElementById('board');
-for (let i = 0; i < 9; i++)
-  board.insertAdjacentHTML('beforeend', `<td id="c${i}"></td>`);
+  const board = document.getElementById('board');
 
-let myMark, turn;
+  // ── build a 3 × 3 grid ────────────────────────────────────────────────
+  for (let r = 0; r < 3; r++) {
+    const tr = board.insertRow();
+    for (let c = 0; c < 3; c++) {
+      const idx = r * 3 + c;                    // 0‥8
+      const td = tr.insertCell();
+      td.id = `c${idx}`;
+      td.className = 'cell';
+    }
+  }
+  // ───────────────────────────────────────────────────────────────────────
 
-const hub = new signalR.HubConnectionBuilder()
-  .withUrl('/play')
-  .withAutomaticReconnect()
-  .build();
+  let myMark, turn;
 
-hub.on('start', p => {
-  // first connection in the room gets X, the second gets O
-  myMark = myMark ? 'O' : 'X';
-  turn = p.turn;
-  document.querySelectorAll('td').forEach(td => td.textContent = '');
-  msg(`Game started – you are ${myMark}`);
-});
+  const hub = new signalR.HubConnectionBuilder()
+    .withUrl('/play')
+    .withAutomaticReconnect()
+    .build();
 
-hub.on('update', u => {
-  u.board.forEach((v, i) =>
-    document.getElementById('c' + i).textContent = v ?? '');
-  turn = u.turn;
-});
+  hub.on('start', p => {
+    myMark = myMark ? 'O' : 'X';        // first tab gets X, second gets O
+    turn = p.turn;                    // should be "X" at game start
+    document.querySelectorAll('.cell').forEach(td => td.textContent = '');
+    msg(`Game started: you are ${myMark}`);
+  });
 
-hub.on('result', r =>
-  msg(r === 'draw' ? 'Draw!' : `${r} wins!`));
+  hub.on('update', u => {
+    u.board.forEach((v, i) =>
+      document.getElementById('c' + i).textContent = v ?? '');
+    turn = u.turn;
+  });
 
-board.onclick = e => {
-  const i = e.target?.id?.slice(1);
-  if (i == null) return;
-  if (turn === myMark) hub.invoke('Move', +i);
-};
+  hub.on('result', r =>
+    msg(r === 'draw' ? 'Draw!' : `${r} wins!`));
 
-function msg(t) { document.getElementById('msg').textContent = t; }
+  // click handler (one per table, cheap!)
+  board.addEventListener('click', e => {
+    if (e.target?.className !== 'cell') return;
+    const idx = +e.target.id.slice(1);           // "c4" → 4
+    if (turn === myMark) hub.invoke('Move', idx);
+  });
 
-hub.start();
+  function msg(t) { document.getElementById('msg').textContent = t; }
+
+  hub.start();
 </script>
 
 <style>
-table { border-collapse: collapse; margin: 40px auto; }
-td    { width: 60px; height: 60px; border: 1px solid #333;
-        text-align: center; font: 40px/60px monospace; cursor: pointer; }
-#msg  { text-align: center; font: 18px sans-serif; }
-</style>
+  table {
+    border-collapse: collapse;
+    margin: 40px auto;
+  }
 
+  .cell {
+    width: 80px;
+    height: 80px;
+    border: 1px solid #333;
+    text-align: center;
+    font: 48px/80px monospace;
+    cursor: pointer;
+  }
+
+  #msg {
+    text-align: center;
+    font: 18px sans-serif;
+  }
+</style>
