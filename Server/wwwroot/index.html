@@ -1,58 +1,77 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<title>Tic-Tac-Toe Arena</title>
+
 <table id="board"></table>
 <p id="msg"></p>
 
 <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"></script>
 <script>
+  /* ─── build a real 3 × 3 grid ───────────────────────────────────────── */
   const board = document.getElementById('board');
-
-  // ── build a 3 × 3 grid ────────────────────────────────────────────────
   for (let r = 0; r < 3; r++) {
     const tr = board.insertRow();
     for (let c = 0; c < 3; c++) {
-      const idx = r * 3 + c;                    // 0‥8
+      const idx = r * 3 + c;                // 0‥8
       const td = tr.insertCell();
       td.id = `c${idx}`;
       td.className = 'cell';
     }
   }
-  // ───────────────────────────────────────────────────────────────────────
 
-  let myMark, turn;
+  /* ─── state ─────────────────────────────────────────────────────────── */
+  let myMark = null;    // "X" or "O"
+  let turn = null;    // whose turn it currently is ("X" | "O")
 
+  /* ─── SignalR connection ────────────────────────────────────────────── */
   const hub = new signalR.HubConnectionBuilder()
     .withUrl('/play')
     .withAutomaticReconnect()
     .build();
 
-  hub.on('start', p => {
-    myMark = myMark ? 'O' : 'X';        // first tab gets X, second gets O
-    turn = p.turn;                    // should be "X" at game start
+  /* helper: update banner under the board */
+  function banner(text) { document.getElementById('msg').textContent = text; }
+  function refreshBanner() {
+    banner(turn === myMark ? 'Your move!' : 'Waiting for opponent...');
+  }
+
+  /* server → client events ------------------------------------------------ */
+  hub.on('start', payload => {
+    myMark = payload.yourMark;   // ← server decides X or O
+    turn = payload.turn;       // "X" at game start
     document.querySelectorAll('.cell').forEach(td => td.textContent = '');
-    msg(`Game started: you are ${myMark}`);
+    banner(`Game started – you are ${myMark}`);
+    refreshBanner();
   });
 
   hub.on('update', u => {
     u.board.forEach((v, i) =>
       document.getElementById('c' + i).textContent = v ?? '');
     turn = u.turn;
+    refreshBanner();
   });
 
-  hub.on('result', r =>
-    msg(r === 'draw' ? 'Draw!' : `${r} wins!`));
+  hub.on('result', r => {
+    banner(r === 'draw' ? 'Draw!' : `${r} wins!`);
+  });
 
-  // click handler (one per table, cheap!)
+  /* ─── click handler (delegated) ──────────────────────────────────────── */
   board.addEventListener('click', e => {
     if (e.target?.className !== 'cell') return;
-    const idx = +e.target.id.slice(1);           // "c4" → 4
-    if (turn === myMark) hub.invoke('Move', idx);
+    if (turn !== myMark) return;           // not your turn – ignore
+    const idx = +e.target.id.slice(1);     // "c5" → 5
+    hub.invoke('Move', idx).catch(console.error);
   });
 
-  function msg(t) { document.getElementById('msg').textContent = t; }
-
-  hub.start();
+  /* ─── start connection ──────────────────────────────────────────────── */
+  hub.start().catch(console.error);
 </script>
 
 <style>
+  body {
+    font-family: system-ui, sans-serif;
+  }
+
   table {
     border-collapse: collapse;
     margin: 40px auto;
@@ -69,6 +88,6 @@
 
   #msg {
     text-align: center;
-    font: 18px sans-serif;
+    font-size: 18px;
   }
 </style>
